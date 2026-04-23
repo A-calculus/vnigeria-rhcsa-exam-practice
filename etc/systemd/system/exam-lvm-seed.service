@@ -1,0 +1,16 @@
+[Unit]
+Description=Seed exam LVM prerequisites
+After=exam-disk-setup.service
+Requires=exam-disk-setup.service
+ConditionPathExists=/var/lib/exam-storage/.disks_ready
+ConditionPathExists=!/var/lib/exam-storage/.lvm_seeded
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/seed-exam-lvm
+ExecStartPost=/usr/bin/touch /var/lib/exam-storage/.lvm_seeded
+ExecStartPost=/usr/bin/rm -f /usr/local/bin/seed-exam-lvm
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

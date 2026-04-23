@@ -1,0 +1,14 @@
+[Unit]
+Description=Attach exam secondary disks (2G each)
+After=local-fs.target
+ConditionPathExists=!/var/lib/exam-storage/.disks_ready
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-exam-disks
+ExecStartPost=/usr/bin/touch /var/lib/exam-storage/.disks_ready
+ExecStartPost=/usr/bin/rm -f /usr/local/bin/setup-exam-disks
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

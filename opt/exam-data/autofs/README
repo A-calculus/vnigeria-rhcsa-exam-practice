@@ -1,0 +1,6 @@
+Autofs fallback baseline for this container
+
+Remote lab NFS server is not available here.
+Use the fallback path directly:
+- /opt/exam-data/autofs/netdir/remoteuser1 -> /netdir/remoteuser1
+

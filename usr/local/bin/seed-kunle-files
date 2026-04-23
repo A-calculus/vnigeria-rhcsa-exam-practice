@@ -1,0 +1,11 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+if id kunle >/dev/null 2>&1; then
+    chown -R kunle:kunle /opt/exam-data/kunle
+    touch /opt/exam-data/kunle/.seeded
+    rm -f /usr/local/bin/seed-kunle-files
+    echo "Seeded kunle-owned files under /opt/exam-data/kunle"
+else
+    echo "User kunle does not exist yet. Create user first, then rerun seed-kunle-files."
+fi

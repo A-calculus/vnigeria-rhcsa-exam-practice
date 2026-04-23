@@ -1,0 +1,14 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+mkdir -p /dev/exam-disks
+for disk in sdb sdc sdd; do
+    img="/var/lib/exam-storage/${disk}.img"
+    [ -f "${img}" ] || continue
+    loopdev="$(losetup -j "${img}" | awk -F: 'NR==1 {print $1}')"
+    if [ -z "${loopdev}" ]; then
+        loopdev="$(losetup --find --show "${img}")"
+    fi
+    ln -sfn "${loopdev}" "/dev/exam-disks/${disk}"
+    ln -sfn "${loopdev}" "/dev/${disk}"
+done

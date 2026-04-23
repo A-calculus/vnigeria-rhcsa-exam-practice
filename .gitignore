@@ -1,0 +1,6 @@
+# Local RHSM credentials (do not commit secrets)
+etc/management-client/.credentials
+
+# Optional local env files
+.env
+.env.*

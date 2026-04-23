@@ -1,0 +1,13 @@
+[Unit]
+Description=Create exam practice interface exam0
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=-/usr/sbin/ip link add exam0 type dummy
+ExecStart=/usr/sbin/ip link set exam0 up
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

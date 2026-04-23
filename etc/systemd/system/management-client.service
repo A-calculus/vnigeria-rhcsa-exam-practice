@@ -1,0 +1,13 @@
+[Unit]
+Description=Run management client at boot
+After=network-online.target
+ConditionPathExists=/etc/management-client/.run_next_boot
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/management-client/.credentials
+ExecStart=/usr/bin/management-client register --activation-key ${CLIENT_ACTIVATION_KEY} --organization ${CLIENT_ORG_ID}
+ExecStartPost=/bin/rm -f /etc/management-client/.run_next_boot
+
+[Install]
+WantedBy=multi-user.target

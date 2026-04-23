@@ -1,0 +1,18 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+# Scenario 17 baseline: create LV "vo" in VG "vo" on exam sdc.
+if ! vgs vo >/dev/null 2>&1; then
+    pvcreate -ff -y /dev/exam-disks/sdc
+    vgcreate vo /dev/exam-disks/sdc
+fi
+if ! lvs vo/vo >/dev/null 2>&1; then
+    lvcreate -n vo -L 200M vo
+    mkfs.xfs -f /dev/vo/vo
+fi
+
+# Scenario 19 baseline: create VG "tech" with 8MiB extents on exam sdd.
+if ! vgs tech >/dev/null 2>&1; then
+    pvcreate -ff -y /dev/exam-disks/sdd
+    vgcreate -s 8M tech /dev/exam-disks/sdd
+fi

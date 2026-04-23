@@ -1,0 +1,11 @@
+Scenario 22 firewall task (specific values)
+
+Allow this service:
+- ftp
+
+Allow this custom port:
+- 2121/tcp
+
+Service that should already be running:
+- vsftpd
+
