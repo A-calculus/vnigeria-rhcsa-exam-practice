@@ -1,18 +1,184 @@
 #!/usr/bin/bash
 set -euo pipefail
 
-# Scenario 17 baseline: create LV "vo" in VG "vo" on exam sdc.
-if ! vgs vo >/dev/null 2>&1; then
-    pvcreate -ff -y /dev/exam-disks/sdc
-    vgcreate vo /dev/exam-disks/sdc
-fi
-if ! lvs vo/vo >/dev/null 2>&1; then
-    lvcreate -n vo -L 200M vo
-    mkfs.xfs -f /dev/vo/vo
+log_file="/var/log/exam-lvm-seed.log"
+mkdir -p /var/log
+
+log() {
+    echo "[$(date -Is)] exam-lvm-seed: $*" >> "${log_file}"
+    echo "[$(date -Is)] exam-lvm-seed: $*"
+}
+
+log "===== start (pid=$$) ====="
+{
+    echo "--- /dev/sd[bcd] ---"
+    ls -l /dev/sd[bcd] 2>&1 || true
+    echo "--- /dev/exam-disks ---"
+    ls -l /dev/exam-disks 2>&1 || true
+    echo "--- lsblk ---"
+    lsblk 2>&1 || true
+} >> "${log_file}"
+
+if [[ ! -b /dev/sdc ]]; then
+    log "FAILED: /dev/sdc is not a block device"
+    exit 1
 fi
 
-# Scenario 19 baseline: create VG "tech" with 8MiB extents on exam sdd.
-if ! vgs tech >/dev/null 2>&1; then
-    pvcreate -ff -y /dev/exam-disks/sdd
-    vgcreate -s 8M tech /dev/exam-disks/sdd
+diskdev="$(readlink -f /dev/sdc || true)"
+[[ -n "${diskdev}" ]] || diskdev="/dev/sdc"
+log "resolved diskdev=${diskdev}"
+
+if vgs vo >/dev/null 2>&1; then
+    log "removing existing VG vo"
+    lvremove -ff -y vo/vo >> "${log_file}" 2>&1 || true
+    vgchange -an vo >> "${log_file}" 2>&1 || true
+    vgremove -ff -y vo >> "${log_file}" 2>&1 || true
 fi
+
+log "pvremove cleanup (ignore errors)"
+pvremove -ff -y /dev/sdc1 >> "${log_file}" 2>&1 || true
+pvremove -ff -y /dev/sdc >> "${log_file}" 2>&1 || true
+
+log "parted: new GPT + partition on ${diskdev}"
+parted -s "${diskdev}" mklabel gpt >> "${log_file}" 2>&1
+parted -s "${diskdev}" mkpart primary 1MiB 100% >> "${log_file}" 2>&1
+parted -s "${diskdev}" set 1 lvm on >> "${log_file}" 2>&1
+
+partdev="/dev/sdc1"
+for i in $(seq 1 40); do
+    log "partition wait iteration ${i}/40"
+    partprobe "${diskdev}" >> "${log_file}" 2>&1 || true
+    partx -u "${diskdev}" >> "${log_file}" 2>&1 || true
+    /usr/local/bin/exam-block-sync >>"${log_file}" 2>&1 || log "exam-block-sync returned $? (continuing)"
+
+    if [[ -b "${partdev}" ]]; then
+        log "partition ready: ${partdev} ($(ls -l "${partdev}" 2>&1 | tr '\n' ' '))"
+        break
+    fi
+
+    cand="$(lsblk -lnpo NAME,TYPE "${diskdev}" 2>>"${log_file}" | awk '$2=="part"{print $1; exit}')"
+    log "lsblk partition candidate: ${cand:-none}"
+    if [[ -n "${cand}" ]] && [[ ! -b "${cand}" ]]; then
+        mm="$(lsblk -lnpo NAME,MAJ:MIN "${diskdev}" 2>>"${log_file}" | awk -v p="${cand}" '$1==p{print $2; exit}')"
+        log "mknod fallback maj:min=${mm:-empty} for ${cand}"
+        if [[ -n "${mm}" ]]; then
+            maj="${mm%%:*}"
+            min="${mm##*:}"
+            mknod -m 0660 "${cand}" b "${maj}" "${min}" >> "${log_file}" 2>&1 || true
+        fi
+    fi
+    /usr/local/bin/exam-block-sync >>"${log_file}" 2>&1 || true
+
+    if [[ -b "${partdev}" ]]; then
+        log "partition ready after mknod/sync"
+        break
+    fi
+    sleep 1
+done
+
+if [[ ! -b "${partdev}" ]]; then
+    log "FAILED: ${partdev} not available after partition+sync"
+    exit 1
+fi
+
+log "pvcreate on ${partdev}"
+pvremove -ff -y "${partdev}" >> "${log_file}" 2>&1 || true
+pvcreate -ff -y "${partdev}" >> "${log_file}" 2>&1
+
+log "vgcreate vo ${partdev}"
+vgcreate vo "${partdev}" >> "${log_file}" 2>&1
+
+log "lvcreate vo/vo 500M"
+# Default lvcreate opens /dev/vo/vo to zero/wipe before mkfs; in Podman/systemd containers
+# that node often is not there yet → "not found: device not cleared". -Zn skips that I/O;
+# mkfs.xfs -f then writes a fresh filesystem (safe for this new LV on loop PV).
+lvcreate -Zn -n vo -L 500M -y vo >> "${log_file}" 2>&1
+
+log "vgchange -ay vo"
+vgchange -ay vo >> "${log_file}" 2>&1 || true
+vgmknodes vo >> "${log_file}" 2>&1 || true
+/usr/local/bin/exam-block-sync >>"${log_file}" 2>&1 || true
+
+# Resolve a block path for mkfs. In Podman, udev may never create /dev/vo/vo or
+# /dev/mapper/vo-vo; dmsetup mknodes can fail chown if /dev/dm-* is missing.
+# Kernel still exposes the DM device via /sys/dev/block/Maj:Min -> .../dm-N.
+exam_resolve_lv_blockdev() {
+    local vg_lv="$1"
+    local kmaj kmin sysn real dmname
+
+    read -r kmaj kmin <<<"$(lvs --noheadings -o lv_kernel_major,lv_kernel_minor "${vg_lv}" 2>/dev/null | head -1 || true)"
+    kmaj="${kmaj// /}"
+    kmin="${kmin// /}"
+    if [[ -z "${kmaj}" || -z "${kmin}" ]]; then
+        read -r kmaj kmin <<<"$(lvs --noheadings -o kernel_major,kernel_minor "${vg_lv}" 2>/dev/null | head -1 || true)"
+        kmaj="${kmaj// /}"
+        kmin="${kmin// /}"
+    fi
+    if [[ -z "${kmaj}" || -z "${kmin}" || ! -e "/sys/dev/block/${kmaj}:${kmin}" ]]; then
+        ldp="$(lvs --noheadings -o lv_dm_path "${vg_lv}" 2>/dev/null | head -1)"
+        dmname=""
+        [[ -n "${ldp}" ]] && dmname="$(basename "${ldp}")"
+        [[ -z "${dmname}" ]] && dmname="vo-vo"
+        read -r kmaj kmin <<<"$(dmsetup info -c --noheadings -o Major,Minor "${dmname}" 2>/dev/null | head -1 || true)"
+        kmaj="${kmaj// /}"
+        kmin="${kmin// /}"
+    fi
+    [[ -z "${kmaj}" || -z "${kmin}" ]] && return 1
+    [[ ! -e "/sys/dev/block/${kmaj}:${kmin}" ]] && return 1
+    sysn="$(basename "$(readlink -f "/sys/dev/block/${kmaj}:${kmin}")")"
+    [[ -z "${sysn}" ]] && return 1
+    real="/dev/${sysn}"
+    if [[ ! -b "${real}" ]]; then
+        mknod -m 0660 "${real}" b "${kmaj}" "${kmin}" >>"${log_file}" 2>&1 || return 1
+    fi
+    [[ -b "${real}" ]] || return 1
+    printf '%s' "${real}"
+    return 0
+}
+
+lv_path="$(lvs --noheadings -o lv_path vo/vo 2>/dev/null | xargs || true)"
+[[ -n "${lv_path}" ]] || lv_path="/dev/mapper/vo-vo"
+log "lvs lv_path=${lv_path}"
+
+for i in $(seq 1 15); do
+    if [[ -b "${lv_path}" ]] || [[ -b "/dev/mapper/vo-vo" ]] || [[ -b "/dev/vo/vo" ]]; then
+        log "LV node present (iter ${i})"
+        break
+    fi
+    if resolved="$(exam_resolve_lv_blockdev vo/vo 2>>"${log_file}")" && [[ -b "${resolved}" ]]; then
+        log "LV resolved via sysfs/mknod (iter ${i}): ${resolved}"
+        break
+    fi
+    log "waiting for LV node (iter ${i})"
+    udevadm settle --timeout=5 >> "${log_file}" 2>&1 || true
+    vgmknodes vo >> "${log_file}" 2>&1 || true
+    dmsetup mknodes >> "${log_file}" 2>&1 || true
+    /usr/local/bin/exam-block-sync >>"${log_file}" 2>&1 || true
+    sleep 1
+done
+
+# Prefer sysfs-resolved /dev/dm-* when udev paths are missing or appear late (log matches mkfs target).
+mkfs_target=""
+if resolved="$(exam_resolve_lv_blockdev vo/vo 2>>"${log_file}")" && [[ -b "${resolved}" ]]; then
+    mkfs_target="${resolved}"
+    log "mkfs will use resolved LV path ${mkfs_target}"
+elif [[ -b "${lv_path}" ]]; then
+    mkfs_target="${lv_path}"
+elif [[ -b "/dev/mapper/vo-vo" ]]; then
+    mkfs_target="/dev/mapper/vo-vo"
+elif [[ -b "/dev/vo/vo" ]]; then
+    mkfs_target="/dev/vo/vo"
+fi
+
+if [[ -z "${mkfs_target}" ]]; then
+    log "FAILED: LV device node for vo/vo not found"
+    ls -l /dev/mapper/ >> "${log_file}" 2>&1 || true
+    ls -l /dev/dm-* >> "${log_file}" 2>&1 || true
+    lvs -a -o +devices,lv_kernel_major,lv_kernel_minor >> "${log_file}" 2>&1 || true
+    exit 1
+fi
+
+log "mkfs.xfs -f ${mkfs_target}"
+mkfs.xfs -f "${mkfs_target}" >> "${log_file}" 2>&1
+
+log "===== success ====="

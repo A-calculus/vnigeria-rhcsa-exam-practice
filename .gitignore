@@ -4,3 +4,7 @@ etc/management-client/.credentials
 # Optional local env files
 .env
 .env.*
+*image-mode.txt
+
+# Local image build secrets (Telegram); template: exam-build.env.example
+exam-build.env

@@ -1,0 +1,118 @@
+#!/usr/bin/bash
+# Refresh block device nodes and bare-metal-style names (/dev/sdc1, etc.) for exam loop disks.
+# Contract: /dev/sdb -> loop0, /dev/sdc -> loop1, /dev/sdd -> loop2 (enforced in setup-exam-disks).
+# Multiple partitions per disk: each /dev/sdXN is symlinked only to its loopNpN; adding p2 does not
+# recreate or remove p1 nodes unless p1 is still missing (mknod once). Symlinks are updated only
+# when the target would change.
+set -u
+
+log_file="/var/log/exam-block-sync.log"
+mkdir -p /var/log
+
+log() {
+    echo "[$(date -Is)] exam-block-sync: $*" >> "${log_file}"
+}
+
+log "===== start (pid=$$) argv=${*:-none} ====="
+
+exec 200>/run/exam-block-sync.lock
+if ! flock -w 120 200; then
+    log "flock wait timeout, exiting"
+    exit 0
+fi
+
+run() {
+    local desc="$1"
+    shift
+    log "run: ${desc}: $*"
+    local ec=0
+    "$@" >> "${log_file}" 2>&1 || ec=$?
+    if [[ "${ec}" -ne 0 ]]; then
+        log "run: ${desc} exited ${ec} (continuing)"
+    fi
+    return 0
+}
+
+run "udevadm trigger" udevadm trigger --subsystem-match=block --action=change
+run "udevadm settle" udevadm settle --timeout=90
+run "dmsetup mknodes" dmsetup mknodes
+
+expected_loop_for_disk() {
+    case "$1" in
+        sdb) printf '%s' "/dev/loop0" ;;
+        sdc) printf '%s' "/dev/loop1" ;;
+        sdd) printf '%s' "/dev/loop2" ;;
+        *) return 1 ;;
+    esac
+}
+
+exam_alias_exam_disk_partitions() {
+    local disk loopdev loopbase name typ basepart suf num expected alias cur_targ
+    for disk in sdb sdc sdd; do
+        [[ -e "/dev/${disk}" ]] || {
+            log "alias: skip /dev/${disk} (missing)"
+            continue
+        }
+        loopdev="$(readlink -f "/dev/${disk}" 2>/dev/null || true)"
+        if [[ -z "${loopdev}" ]] || [[ ! -b "${loopdev}" ]]; then
+            log "alias: skip ${disk} (no backing block dev loopdev=${loopdev:-empty})"
+            continue
+        fi
+        expected="$(expected_loop_for_disk "${disk}")"
+        if [[ "${loopdev}" != "${expected}" ]]; then
+            log "alias: skip ${disk} -> ${loopdev} (expected ${expected}; fix with setup-exam-disks)"
+            continue
+        fi
+        loopbase="$(basename "${loopdev}")"
+        log "alias: disk=${disk} -> ${loopdev} (base=${loopbase})"
+        partprobe "${loopdev}" 2>>"${log_file}" || true
+        partx -u "${loopdev}" 2>>"${log_file}" || true
+        while read -r name typ; do
+            [[ "${typ}" == "part" ]] || continue
+            basepart="$(basename "${name}")"
+            case "${basepart}" in
+                "${loopbase}"p*) suf="${basepart#"${loopbase}"}" ;;
+                *) continue ;;
+            esac
+            num="${suf#p}"
+            [[ -n "${num}" ]] || continue
+            if [[ ! -b "${name}" ]]; then
+                mm="$(lsblk -lnpo NAME,MAJ:MIN "${loopdev}" 2>>"${log_file}" | awk -v p="${name}" '$1==p{print $2; exit}')"
+                if [[ -n "${mm}" ]]; then
+                    maj="${mm%%:*}"
+                    min="${mm##*:}"
+                    rm -f "${name}" 2>>"${log_file}" || true
+                    if mknod -m 0660 "${name}" b "${maj}" "${min}" 2>>"${log_file}"; then
+                        log "alias: mknod ${name} b ${maj} ${min} (udev had no node)"
+                    else
+                        log "alias: mknod failed for ${name}"
+                    fi
+                else
+                    log "alias: skip ${name} (not a block device, no maj:min from lsblk)"
+                fi
+            fi
+            if [[ -b "${name}" ]]; then
+                alias="/dev/${disk}${num}"
+                cur_targ="$(readlink "${alias}" 2>/dev/null || true)"
+                if [[ -L "${alias}" ]] && [[ "${cur_targ}" == "${name}" ]] && [[ -b "${alias}" ]]; then
+                    log "alias: ok ${alias} -> ${name} (unchanged)"
+                elif ln -sfn "${name}" "${alias}"; then
+                    log "alias: ln -sfn ${name} -> ${alias}"
+                else
+                    log "alias: FAILED ln -sfn ${name} -> ${alias}"
+                fi
+                # Open once so partition appears in sysfs; avoids lsblk failing on the
+                # symlink with "failed to get sysfs name" until something else opens it.
+                if [[ -b "${alias}" ]]; then
+                    blockdev --getsize64 "${alias}" >>"${log_file}" 2>&1 || true
+                fi
+            else
+                log "alias: skip ${name} (still not a block device after mknod)"
+            fi
+        done < <(lsblk -nplo NAME,TYPE "${loopdev}" 2>>"${log_file}" || true)
+    done
+}
+
+exam_alias_exam_disk_partitions
+
+log "===== done ====="

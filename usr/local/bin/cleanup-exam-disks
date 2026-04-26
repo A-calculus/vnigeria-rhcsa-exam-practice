@@ -1,0 +1,47 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+log_file="/var/log/exam-disk-setup.log"
+echo "[$(date -Is)] exam-disk-setup: cleanup start" >> "${log_file}"
+
+ensure_loop_nodes() {
+    [ -c /dev/loop-control ] || mknod -m 0660 /dev/loop-control c 10 237 >> "${log_file}" 2>&1 || true
+    for n in $(seq 0 31); do
+        [ -b "/dev/loop${n}" ] || mknod -m 0660 "/dev/loop${n}" b 7 "${n}" >> "${log_file}" 2>&1 || true
+    done
+}
+
+# Deactivate Scenario 17 LVM stack first, otherwise loop detach is blocked.
+lvchange -an /dev/vo/vo >> "${log_file}" 2>&1 || true
+vgchange -an vo >> "${log_file}" 2>&1 || true
+vgremove -ff -y vo >> "${log_file}" 2>&1 || true
+for pv in /dev/sdc /dev/sdc1 /dev/loop*; do
+    pvremove -ff -y "${pv}" >> "${log_file}" 2>&1 || true
+done
+dmsetup remove_all >> "${log_file}" 2>&1 || true
+ensure_loop_nodes
+
+# sdb=loop0, sdc=loop1, sdd=loop2 — detach by image and explicit minors.
+for disk in sdb sdc sdd; do
+    rm -f /dev/"${disk}"[0-9]* 2>/dev/null || true
+    rm -f "/dev/exam-disks/${disk}" "/dev/${disk}"
+    img="/var/lib/exam-storage/${disk}.img"
+    for lp in $(losetup -j "${img}" 2>/dev/null | awk -F: '{print $1}'); do
+        losetup -d "${lp}" >> "${log_file}" 2>&1 || true
+        echo "[$(date -Is)] detached ${lp} for ${img}" >> "${log_file}"
+    done
+    for sysf in /sys/block/loop*/loop/backing_file; do
+        [ -e "${sysf}" ] || continue
+        if grep -qx "${img}" "${sysf}" 2>/dev/null; then
+            loop_name="$(basename "$(dirname "$(dirname "${sysf}")")")"
+            losetup -d "/dev/${loop_name}" >> "${log_file}" 2>&1 || true
+            echo "[$(date -Is)] detached /dev/${loop_name} via sysfs for ${img}" >> "${log_file}"
+        fi
+    done
+done
+for idx in 0 1 2; do
+    losetup -d "/dev/loop${idx}" >> "${log_file}" 2>&1 || true
+done
+
+rm -f /var/lib/exam-storage/.disks_ready
+echo "[$(date -Is)] exam-disk-setup: cleanup complete" >> "${log_file}"

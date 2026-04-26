@@ -91,8 +91,8 @@ Set the password for all three users to:
 - Output of `getent group vnigeria`
 - Output of `id ayo`
 - Output of `id bode`
-- Output of `id kunle`
-- Output of `getent passwd kunle` (to confirm non-interactive shell)
+- Output of `id tobi`
+- Output of `getent passwd tobi` (to confirm non-interactive shell)
 
 ## Scenario 5 - Configure a Cron Job
 
@@ -143,9 +143,11 @@ Then restart `sshd` and verify login prompts for password.
 Configure autofs to mount the remote user home below `/netdir`.
 
 Primary target (exam-lab style):
+
 - `/opt/exam-data/autofs/netdir/remoteuser1` -> `/netdir/remoteuser1`
 
 Notes:
+
 - `autofs` and `nfs-utils` are installed.
 - You must still configure autofs maps and enable/start `autofs` yourself.
 
@@ -182,7 +184,7 @@ Hint: standard mode bits plus ACLs are expected for this requirement set.
 Create a user named `dan` with:
 
 - UID: `2002`
-- Password: `flectrag`
+- Password: `vnigeria`
 
 ### What to submit
 
@@ -242,22 +244,28 @@ Create these archives containing `/usr/bin` and `/usr/local`:
 For user `dan`, create a rootless container named `logserver` and configure user-level systemd so it starts automatically.
 
 Guidance:
+
 - Pull a public, no-login image URL:
   - `quay.io/libpod/alpine:latest`
+- The image’s default command exits immediately. For a **detached** container that stays up (e.g. to run a few `podman exec` commands as root), use a long-running CMD, for example:
+  - `podman run -d --name logserver quay.io/libpod/alpine:latest sleep infinity`
+  For an interactive shell instead, use `podman run -it --rm ... sh`.
 - Do not rely on root-level container service for this task.
 
 ### What to submit
 
 - Output of `sudo -iu dan podman ps -a`
 - Output of `sudo -iu dan systemctl --user status container-logserver --no-pager`
-- Output of `sudo -iu dan loginctl show-user dan | rg Linger`
+- Output of `sudo -iu dan loginctl show-user dan | grep Linger`
 
 ## Scenario 15 - Install a Service Package and Start Its Service
 
 Install the staged package from project path:
+
 - `/opt/exam-data/packages/vsftpd-3.0.5-10.el10_1.1.x86_64.rpm`
 
 Then:
+
 - enable and start `vsftpd`
 - confirm it is active and enabled at boot
 
@@ -281,8 +289,9 @@ Create `/usr/local/bin/file_search` that finds files under `/` larger than 30k a
 
 ## Scenario 17 - Resize Logical Volume
 
-Resize logical volume `vo` and its filesystem to `300MiB` (acceptable range 270-330MiB).
+Resize logical volume `vo` and its filesystem to `750MiB` (acceptable range 700-830MiB).
 
+**LVM on exam disks:** this image sets `use_devicesfile = 0` so new PVs/VGs on `/dev/sdb1` etc. show up in `vgs` and `vgchange`. If `lvcreate` fails with **device not cleared**, use **`lvcreate -Zn`** (then `mkfs` as usual), matching the seeded `vo` VG behavior.
 
 ### What to submit
 
@@ -294,7 +303,6 @@ Resize logical volume `vo` and its filesystem to `300MiB` (acceptable range 270-
 
 Create an additional swap partition of `512MiB`, activate it, and persist it after boot.
 
-
 ### What to submit
 
 - Output of `swapon --show`
@@ -303,8 +311,7 @@ Create an additional swap partition of `512MiB`, activate it, and persist it aft
 
 ## Scenario 19 - Create Logical Volume with VFAT
 
-Create LV `dev` in VG `tech` using `2` extents, format it as VFAT, and mount at `/mnt/dev` at boot.
-Baseline `tech` VG with 8MiB extents is pre-staged.
+Create LV `dev` in VG `tech` using `2` extents, format it as VFAT, and mount at `/mnt/dev` at boot using disk /dev/sdd
 
 ### What to submit
 
@@ -335,10 +342,12 @@ Set up `/shared/project` with group `devteam`, mode `2770`, sticky bit, and appl
 ## Scenario 22 - Firewalld Service and Custom Port
 
 Allow the specific firewalld service and custom port for the installed package service:
+
 - Service: `ftp`
 - Port: `2121/tcp`
 
 Note:
+
 - `vsftpd` should already be running from Scenario 15.
 - Keep your service running while testing firewall rules.
 
@@ -362,3 +371,4 @@ For development, keep credentials local and untracked:
 
 - Copy `etc/management-client/.credentials.template` to `etc/management-client/.credentials`
 - Fill your activation key and org ID in that local file before build/test
+

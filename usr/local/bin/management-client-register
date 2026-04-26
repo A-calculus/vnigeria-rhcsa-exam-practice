@@ -1,0 +1,15 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+# Keep registration flow compatible across environments where
+# management-client may not exist, but subscription-manager does.
+if command -v management-client >/dev/null 2>&1; then
+    management-client register --activation-key "${CLIENT_ACTIVATION_KEY:-}" || true
+    exit 0
+fi
+
+if command -v subscription-manager >/dev/null 2>&1; then
+    if [ -n "${CLIENT_ACTIVATION_KEY:-}" ] && [ -n "${CLIENT_ORG_ID:-}" ]; then
+        subscription-manager register --activationkey="${CLIENT_ACTIVATION_KEY}" --org="${CLIENT_ORG_ID}" || true
+    fi
+fi

@@ -11,6 +11,8 @@ ExecStart=/usr/local/bin/seed-exam-lvm
 ExecStartPost=/usr/bin/touch /var/lib/exam-storage/.lvm_seeded
 ExecStartPost=/usr/bin/rm -f /usr/local/bin/seed-exam-lvm
 RemainAfterExit=yes
+StandardOutput=append:/var/log/exam-lvm-seed.systemd.log
+StandardError=append:/var/log/exam-lvm-seed.systemd.log
 
 [Install]
 WantedBy=multi-user.target

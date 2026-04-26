@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "totalPoints": 300,
+  "description": "Max points per scenario (sum=300). Automated checks are implemented in /usr/local/bin/exam-score-scenarios.",
+  "scenarios": [
+    {"id": 1, "title": "Configure Network Settings", "maxPoints": 15},
+    {"id": 2, "title": "Configure Default Repositories", "maxPoints": 12},
+    {"id": 3, "title": "Debug SELinux for HTTP on Port 82", "maxPoints": 21},
+    {"id": 4, "title": "Create Users, Group, and Memberships", "maxPoints": 12},
+    {"id": 5, "title": "Configure a Cron Job", "maxPoints": 10},
+    {"id": 6, "title": "Create a Collaborative Directory", "maxPoints": 11},
+    {"id": 7, "title": "Configure SSH Password Authentication", "maxPoints": 11},
+    {"id": 8, "title": "Configure autofs", "maxPoints": 14},
+    {"id": 9, "title": "Configure Permissions on /var/tmp/boot.log", "maxPoints": 20},
+    {"id": 10, "title": "Configure a User Account (dan)", "maxPoints": 9},
+    {"id": 11, "title": "Locate Files Owned by kunle", "maxPoints": 11},
+    {"id": 12, "title": "Find String Matches in Dictionary", "maxPoints": 8},
+    {"id": 13, "title": "Create Compressed Archives", "maxPoints": 13},
+    {"id": 14, "title": "Rootless Container Auto-start Service", "maxPoints": 25},
+    {"id": 15, "title": "Install Service Package (vsftpd)", "maxPoints": 13},
+    {"id": 16, "title": "Create Script file_search", "maxPoints": 11},
+    {"id": 17, "title": "Resize Logical Volume vo", "maxPoints": 20},
+    {"id": 18, "title": "Add Swap Partition", "maxPoints": 13},
+    {"id": 19, "title": "Create Logical Volume with VFAT (tech/dev)", "maxPoints": 21},
+    {"id": 20, "title": "Configure System Tuning (tuned)", "maxPoints": 9},
+    {"id": 21, "title": "Collaborative Directory with Sticky Bit", "maxPoints": 10},
+    {"id": 22, "title": "Firewalld ftp + 2121/tcp", "maxPoints": 11}
+  ]
+}

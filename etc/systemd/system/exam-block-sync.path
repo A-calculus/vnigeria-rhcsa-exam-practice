@@ -1,0 +1,15 @@
+[Unit]
+Description=Trigger block device sync when /dev or block class changes
+DefaultDependencies=no
+After=local-fs.target sysinit.target
+# Do not watch /dev during LVM seed (avoids start-limit burst and ordering fights).
+After=exam-lvm-seed.service
+Wants=exam-lvm-seed.service
+
+[Path]
+PathModified=/dev
+PathModified=/sys/class/block
+Unit=exam-block-sync.service
+
+[Install]
+WantedBy=multi-user.target

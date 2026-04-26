@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync block device nodes (udev settle, dmsetup mknodes)
+Documentation=man:udevadm(8) man:dmsetup(8)
+# Rate limits belong in [Unit], not [Service]
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/exam-block-sync
+IOSchedulingClass=idle
+StandardOutput=append:/var/log/exam-block-sync.systemd.log
+StandardError=append:/var/log/exam-block-sync.systemd.log

@@ -1,0 +1,13 @@
+[Unit]
+Description=Seed Scenario 3 intentionally broken SELinux state
+After=httpd.service network-online.target
+Wants=httpd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/seed-scenario3-broken-state
+ExecStartPost=/usr/bin/rm -f /usr/local/bin/seed-scenario3-broken-state
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

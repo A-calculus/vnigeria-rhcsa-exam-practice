@@ -1,14 +1,68 @@
 #!/usr/bin/bash
 set -euo pipefail
 
-mkdir -p /dev/exam-disks
-for disk in sdb sdc sdd; do
-    img="/var/lib/exam-storage/${disk}.img"
-    [ -f "${img}" ] || continue
-    loopdev="$(losetup -j "${img}" | awk -F: 'NR==1 {print $1}')"
-    if [ -z "${loopdev}" ]; then
-        loopdev="$(losetup --find --show "${img}")"
-    fi
-    ln -sfn "${loopdev}" "/dev/exam-disks/${disk}"
-    ln -sfn "${loopdev}" "/dev/${disk}"
+log_file="/var/log/exam-disk-setup.log"
+mkdir -p /var/log
+echo "[$(date -Is)] exam-disk-setup: start" > "${log_file}"
+
+# Ensure loop devices exist in minimal/container environments.
+if [ ! -c /dev/loop-control ]; then
+    mknod -m 0660 /dev/loop-control c 10 237 >>"${log_file}" 2>&1 || true
+fi
+for n in $(seq 0 15); do
+    [ -b "/dev/loop${n}" ] || mknod -m 0660 "/dev/loop${n}" b 7 "${n}" >>"${log_file}" 2>&1 || true
 done
+
+mkdir -p /dev/exam-disks
+ready_count=0
+
+# Fixed mapping (exam contract): sdb=loop0, sdc=loop1, sdd=loop2 — never losetup --find.
+attach_exam_disk() {
+    local disk="$1" idx="$2"
+    local loop="/dev/loop${idx}" img="/var/lib/exam-storage/${disk}.img"
+
+    if [[ ! -f "${img}" ]]; then
+        echo "[$(date -Is)] skip ${disk}: missing ${img}" >> "${log_file}"
+        return 1
+    fi
+
+    losetup -d "${loop}" >>"${log_file}" 2>&1 || true
+    local lp
+    for lp in $(losetup -j "${img}" 2>>"${log_file}" | awk -F: '{print $1}' || true); do
+        if [[ "${lp}" != "${loop}" ]]; then
+            losetup -d "${lp}" >>"${log_file}" 2>&1 || true
+        fi
+    done
+
+    if ! losetup "${loop}" "${img}" >>"${log_file}" 2>&1; then
+        echo "[$(date -Is)] failed: losetup ${loop} ${img}" >> "${log_file}"
+        return 1
+    fi
+    ln -sfn "${loop}" "/dev/exam-disks/${disk}"
+    ln -sfn "${loop}" "/dev/${disk}"
+    echo "[$(date -Is)] mapped ${img} -> ${loop} (alias /dev/${disk})" >> "${log_file}"
+    return 0
+}
+
+if attach_exam_disk sdb 0; then
+    ready_count=$((ready_count + 1))
+fi
+if attach_exam_disk sdc 1; then
+    ready_count=$((ready_count + 1))
+fi
+if attach_exam_disk sdd 2; then
+    ready_count=$((ready_count + 1))
+fi
+
+# Refresh block device nodes (partition maps, DM minors) without host /dev bind.
+udevadm trigger --subsystem-match=block --action=add >>"${log_file}" 2>&1 || true
+udevadm settle --timeout=90 >>"${log_file}" 2>&1 || true
+
+# Only mark ready when at least the Scenario 17/19 disks are attached.
+if [ "${ready_count}" -ge 2 ]; then
+    touch /var/lib/exam-storage/.disks_ready
+    echo "[$(date -Is)] success: ${ready_count} loop devices attached (sdb=loop0 sdc=loop1 sdd=loop2)" >> "${log_file}"
+else
+    echo "[$(date -Is)] failure: only ${ready_count} loop devices attached" >> "${log_file}"
+    exit 1
+fi

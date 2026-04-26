@@ -1,0 +1,298 @@
+#!/usr/bin/env bash
+# Automated scenario scoring (runs inside exam container). Read-only checks.
+set -euo pipefail
+
+OUT_FILE="${EXAM_SCORE_FILE:-/root/exam-scenario-score.txt}"
+REF_JSON="/opt/exam-data/scoring/scenarios.json"
+
+declare -A MAX=(
+  [1]=15 [2]=12 [3]=21 [4]=12 [5]=10 [6]=11 [7]=11 [8]=14 [9]=20 [10]=9
+  [11]=11 [12]=8 [13]=13 [14]=25 [15]=13 [16]=11 [17]=20 [18]=13 [19]=21 [20]=9 [21]=10 [22]=11
+)
+
+sum_max=0
+for i in $(seq 1 22); do
+  sum_max=$((sum_max + MAX[$i]))
+done
+if [[ "${sum_max}" -ne 300 ]]; then
+  echo "exam-score-scenarios: internal error MAX sum=${sum_max} (expected 300)" >&2
+  exit 1
+fi
+
+pts() { # add $1 if command succeeds
+  local n="$1"
+  shift
+  if "$@"; then echo "${n}"; else echo 0; fi
+}
+
+cap() { # min($1, $2)
+  local a="$1" b="$2"
+  if [[ "${a}" -gt "${b}" ]]; then echo "${b}"; else echo "${a}"; fi
+}
+
+# --- Scenario checks ---
+
+score_s1() {
+  local m="${MAX[1]}" e=0 t
+  t=$(pts 4 hostnamectl --static 2>/dev/null | grep -q 'vm1\.project100\.com' && echo 4 || echo 0); e=$((e + t))
+  t=$(pts 4 ip -4 addr show exam0 2>/dev/null | grep -q '192\.168\.56\.110/24' && echo 4 || echo 0); e=$((e + t))
+  t=$(pts 3 ip route 2>/dev/null | grep -q 'default via 192\.168\.56\.1' && echo 3 || echo 0); e=$((e + t))
+  if grep -q '^nameserver 192\.168\.56\.1' /etc/resolv.conf 2>/dev/null; then
+    e=$((e + 2))
+  elif command -v resolvectl >/dev/null 2>&1 && resolvectl dns exam0 2>/dev/null | grep -q '192\.168\.56\.1'; then
+    e=$((e + 2))
+  fi
+  t=$(pts 2 ip link show exam0 2>/dev/null | grep -q 'state UP' && echo 2 || echo 0); e=$((e + t))
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s2() {
+  local m="${MAX[2]}" e=0 c
+  c=$(grep -RIl 'baseurl=.*fedoraproject\.org.*40' /etc/yum.repos.d 2>/dev/null | wc -l)
+  [[ "${c}" -ge 2 ]] && e=$((e + 6))
+  [[ "${c}" -ge 1 ]] && e=$((e + 3))
+  grep -RIl '^enabled=1' /etc/yum.repos.d 2>/dev/null | xargs -r grep -l 'fedoraproject' 2>/dev/null | head -2 | grep -q . && e=$((e + 3))
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s3() {
+  local m="${MAX[3]}" e=0
+  systemctl is-active --quiet httpd 2>/dev/null && e=$((e + 4)) || true
+  curl -fsSI --max-time 3 http://127.0.0.1:82/ 2>/dev/null | head -1 | grep -q '200' && e=$((e + 5)) || true
+  [[ -f /var/www/html/index.html ]] && grep -q 'The project 100 Exam is currently Ongoing' /var/www/html/index.html 2>/dev/null && e=$((e + 4)) || true
+  semanage port -l 2>/dev/null | grep -q 'http_port_t.*82' && e=$((e + 3)) || true
+  ls -Z /var/www/html/index.html 2>/dev/null | grep -q 'httpd_sys_content_t' && e=$((e + 2)) || true
+  firewall-cmd --list-ports 2>/dev/null | grep -q '82/tcp' && e=$((e + 3)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s4() {
+  local m="${MAX[4]}" e=0
+  getent group vnigeria >/dev/null 2>&1 && e=$((e + 3)) || true
+  id ayo 2>/dev/null | grep -q 'vnigeria' && e=$((e + 3)) || true
+  id bode 2>/dev/null | grep -q 'vnigeria' && e=$((e + 3)) || true
+  if id tobi >/dev/null 2>&1; then
+    if ! id tobi 2>/dev/null | grep -q 'vnigeria'; then
+      e=$((e + 2))
+    fi
+    local sh
+    sh="$(getent passwd tobi | cut -d: -f7)"
+    [[ "${sh}" == "/sbin/nologin" || "${sh}" == "/usr/sbin/nologin" || "${sh}" == "/bin/false" ]] && e=$((e + 1)) || true
+  fi
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s5() {
+  local m="${MAX[5]}" e=0
+  systemctl is-active --quiet crond 2>/dev/null && e=$((e + 3)) || true
+  if crontab -u ayo -l 2>/dev/null | grep -q 'i will pass'; then
+    e=$((e + 4))
+    crontab -u ayo -l 2>/dev/null | grep -q '\*.*\*.*\*.*\*.*\*' && e=$((e + 3)) || true
+  fi
+  [[ -f /home/ayo/cron_pass.log ]] && grep -q 'i will pass' /home/ayo/cron_pass.log 2>/dev/null && e=$((e + 4)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s6() {
+  local m="${MAX[6]}" e=0 mode
+  [[ -d /home/book/materials ]] || { echo 0; return; }
+  local ld
+  ld="$(ls -ld /home/book/materials 2>/dev/null)"
+  echo "${ld}" | grep -q ' vnigeria vnigeria ' && e=$((e + 4)) || true
+  echo "${ld}" | grep -q '^d[rwx-]*[rwx-]*[rwx-]*s' && e=$((e + 4)) || true
+  mode="$(stat -c '%a' /home/book/materials 2>/dev/null || echo 0)"
+  [[ "${mode}" == "2770" ]] && e=$((e + 3)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s7() {
+  local m="${MAX[7]}" e=0 f
+  f="$(grep -RIE '^\s*PasswordAuthentication\s+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d 2>/dev/null | tail -1 || true)"
+  echo "${f}" | grep -qi 'yes' && e=$((e + 4)) || true
+  f="$(grep -RIE '^\s*PubkeyAuthentication\s+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d 2>/dev/null | tail -1 || true)"
+  echo "${f}" | grep -qi 'no' && e=$((e + 4)) || true
+  systemctl is-active --quiet sshd 2>/dev/null && e=$((e + 3)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s8() {
+  local m="${MAX[8]}" e=0
+  systemctl is-active --quiet autofs 2>/dev/null && e=$((e + 5)) || true
+  grep -Rq '/netdir' /etc/auto.master /etc/auto.master.d 2>/dev/null && e=$((e + 4)) || true
+  if [[ -d /netdir/remoteuser1 ]] && ls -A /netdir/remoteuser1 2>/dev/null | grep -q .; then
+    e=$((e + 5))
+  elif mount | grep -q '/netdir/remoteuser1'; then
+    e=$((e + 5))
+  fi
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s9() {
+  local m="${MAX[9]}" e=0
+  [[ -f /var/tmp/boot.log ]] || { echo 0; return; }
+  local st
+  st="$(stat -c '%U:%G %a' /var/tmp/boot.log 2>/dev/null)"
+  echo "${st}" | grep -q '^root:root' && e=$((e + 3)) || true
+  echo "${st}" | grep -q '[^x]..[^x].$' || [[ "$(stat -c '%a' /var/tmp/boot.log)" != *x* ]] && e=$((e + 2)) || true
+  getfacl -p /var/tmp/boot.log 2>/dev/null | grep -q 'user:ayo:rw-' && e=$((e + 5)) || true
+  getfacl -p /var/tmp/boot.log 2>/dev/null | grep -q 'user:bode:---' && e=$((e + 5)) || true
+  getfacl -p /var/tmp/boot.log 2>/dev/null | grep -q 'mask::r-' && e=$((e + 2)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s10() {
+  local m="${MAX[10]}" e=0
+  id -u dan 2>/dev/null | grep -qx '2002' && e=$((e + 9)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s11() {
+  local m="${MAX[11]}" e=0 n
+  [[ -d /root/kunle_results ]] || { echo 0; return; }
+  n="$(find /root/kunle_results -type f 2>/dev/null | wc -l)"
+  [[ "${n}" -ge 1 ]] && e=$((e + 5)) || true
+  [[ "${n}" -ge 2 ]] && e=$((e + 3)) || true
+  find /root/kunle_results -type f -user kunle 2>/dev/null | head -1 | grep -q . && e=$((e + 3)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s12() {
+  local m="${MAX[12]}" e=0 exp got
+  [[ -f /root/ich_words ]] || { echo 0; return; }
+  exp="$(grep -F 'ich' /usr/share/dict/words 2>/dev/null | wc -l)"
+  got="$(wc -l < /root/ich_words)"
+  [[ "${exp}" == "${got}" ]] && e=$((e + 5)) || true
+  head -1 /root/ich_words 2>/dev/null | grep -qF 'ich' && e=$((e + 2)) || true
+  cmp -s <(grep -F 'ich' /usr/share/dict/words 2>/dev/null || true) /root/ich_words 2>/dev/null && e=$((e + 1)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s13() {
+  local m="${MAX[13]}" e=0
+  for f in /root/archive.tar.gz /root/archive.tar.bz2 /root/archive.tar.xz; do
+    [[ -f "${f}" ]] && e=$((e + 3)) || true
+  done
+  tar -tzf /root/archive.tar.gz 2>/dev/null | grep -qE '^(usr/bin|usr/local)(/|$)' && e=$((e + 2)) || true
+  tar -tjf /root/archive.tar.bz2 2>/dev/null | grep -qE '^(usr/bin|usr/local)(/|$)' && e=$((e + 2)) || true
+  tar -tJf /root/archive.tar.xz 2>/dev/null | grep -qE '^(usr/bin|usr/local)(/|$)' && e=$((e + 3)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s14() {
+  local m="${MAX[14]}" e=0
+  id dan >/dev/null 2>&1 || { echo 0; return; }
+  if su - dan -s /bin/bash -c 'podman ps -a --format "{{.Names}}"' 2>/dev/null | grep -qx 'logserver'; then
+    e=$((e + 8))
+  fi
+  if su - dan -s /bin/bash -c 'systemctl --user is-active container-logserver.service' 2>/dev/null | grep -qx 'active'; then
+    e=$((e + 8))
+  elif su - dan -s /bin/bash -c 'systemctl --user status container-logserver.service --no-pager' 2>/dev/null | grep -q 'active (running)'; then
+    e=$((e + 8))
+  fi
+  loginctl show-user dan 2>/dev/null | grep -qi 'Linger=yes' && e=$((e + 6)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s15() {
+  local m="${MAX[15]}" e=0
+  rpm -q vsftpd >/dev/null 2>&1 && e=$((e + 4)) || true
+  systemctl is-active --quiet vsftpd 2>/dev/null && e=$((e + 5)) || true
+  systemctl is-enabled vsftpd 2>/dev/null | grep -qE 'enabled|enabled-runtime' && e=$((e + 4)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s16() {
+  local m="${MAX[16]}" e=0
+  [[ -x /usr/local/bin/file_search ]] && e=$((e + 4)) || true
+  if [[ -f /usr/local/bin/file_search ]] && grep -qE 'find.*/' /usr/local/bin/file_search 2>/dev/null; then
+    e=$((e + 3))
+    grep -qE '\-perm|/4000|u=s' /usr/local/bin/file_search 2>/dev/null && e=$((e + 2)) || true
+    grep -qE '30k|30720|\+30k|-size' /usr/local/bin/file_search 2>/dev/null && e=$((e + 2)) || true
+  fi
+  [[ -f /root/file_output ]] && [[ "$(wc -l < /root/file_output 2>/dev/null)" -ge 0 ]] && e=$((e + 2)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s17() {
+  local m="${MAX[17]}" e=0 sz
+  sz="$(lvs --noheadings --units m -o lv_size --nosuffix vo/vo 2>/dev/null | awk '{print int($1+0)}' || echo 0)"
+  # Accept MiB in 700-830 range (workbook: 750 acceptable range)
+  if [[ "${sz}" -ge 700 && "${sz}" -le 830 ]] 2>/dev/null; then
+    e=$((e + 12))
+  elif [[ "${sz}" -ge 500 && "${sz}" -le 900 ]] 2>/dev/null; then
+    e=$((e + 6))
+  fi
+  df -hT 2>/dev/null | grep -qE 'vo-vo|mapper/vo-vo' && e=$((e + 4)) || true
+  findmnt -n -S /dev/mapper/vo-vo 2>/dev/null | grep -q . && e=$((e + 4)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s18() {
+  local m="${MAX[18]}" e=0
+  swapon --show 2>/dev/null | awk '{print $3}' | grep -qi '512' && e=$((e + 6)) || true
+  swapon --show 2>/dev/null | grep -q . && e=$((e + 3)) || true
+  grep -q swap /etc/fstab 2>/dev/null && e=$((e + 4)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s19() {
+  local m="${MAX[19]}" e=0 devpath
+  vgs tech >/dev/null 2>&1 && e=$((e + 5)) || true
+  lvs tech/dev >/dev/null 2>&1 && e=$((e + 5)) || true
+  devpath="$(readlink -nm /dev/tech/dev 2>/dev/null || echo /dev/tech/dev)"
+  if [[ -b "${devpath}" ]] && blkid "${devpath}" 2>/dev/null | grep -qi vfat; then
+    e=$((e + 5))
+  fi
+  grep -q '/mnt/dev' /etc/fstab 2>/dev/null && e=$((e + 3)) || true
+  findmnt /mnt/dev 2>/dev/null | grep -q /mnt/dev && e=$((e + 3)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s20() {
+  local m="${MAX[20]}" e=0
+  tuned-adm active 2>/dev/null | grep -qi recommend && e=$((e + 5)) || true
+  systemctl is-active --quiet tuned 2>/dev/null && e=$((e + 4)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s21() {
+  local m="${MAX[21]}" e=0
+  [[ -d /shared/project ]] || { echo 0; return; }
+  local ld
+  ld="$(ls -ldn /shared/project 2>/dev/null)"
+  echo "${ld}" | grep -q ' devteam' && e=$((e + 4)) || true
+  echo "${ld}" | grep -q '^d[rwx-]*[rwx-]*[rwx-]*t' && e=$((e + 3)) || true
+  [[ "$(stat -c '%a' /shared/project 2>/dev/null)" == "2770" ]] && e=$((e + 3)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+score_s22() {
+  local m="${MAX[22]}" e=0
+  firewall-cmd --list-services 2>/dev/null | grep -qw 'ftp' && e=$((e + 6)) || true
+  firewall-cmd --list-ports 2>/dev/null | grep -q '2121/tcp' && e=$((e + 5)) || true
+  systemctl is-active --quiet vsftpd 2>/dev/null && e=$((e + 3)) || true
+  echo "$(cap "${e}" "${m}")"
+}
+
+main() {
+  local total=0 earned
+  : > "${OUT_FILE}.tmp"
+  {
+    echo "Project 100 Exam — automated scenario score"
+    echo "Generated: $(date -Is)"
+    [[ -f "${REF_JSON}" ]] && echo "Reference: ${REF_JSON}"
+    echo ""
+  } >> "${OUT_FILE}.tmp"
+
+  for i in $(seq 1 22); do
+    earned="$(score_s${i})"
+    total=$((total + earned))
+    echo "Scenario ${i}: ${earned}/${MAX[$i]}" >> "${OUT_FILE}.tmp"
+  done
+  echo "" >> "${OUT_FILE}.tmp"
+  echo "Total: ${total}/300" >> "${OUT_FILE}.tmp"
+  mv -f "${OUT_FILE}.tmp" "${OUT_FILE}"
+  cat "${OUT_FILE}"
+}
+
+main "$@"

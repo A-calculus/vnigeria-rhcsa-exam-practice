@@ -1,0 +1,12 @@
+[Unit]
+Description=Set exam hostname
+After=local-fs.target
+Before=getty.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c 'printf "exam\n" > /etc/hostname; /usr/bin/hostname exam'
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

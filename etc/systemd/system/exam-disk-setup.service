@@ -6,8 +6,8 @@ ConditionPathExists=!/var/lib/exam-storage/.disks_ready
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/setup-exam-disks
-ExecStartPost=/usr/bin/touch /var/lib/exam-storage/.disks_ready
 ExecStartPost=/usr/bin/rm -f /usr/local/bin/setup-exam-disks
+ExecStop=/usr/local/bin/cleanup-exam-disks
 RemainAfterExit=yes
 
 [Install]

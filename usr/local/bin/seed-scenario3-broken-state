@@ -1,0 +1,15 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+target="/var/www/html/index.html"
+
+printf '%s\n' 'The project 100 Exam is currently Ongoing' > "${target}"
+
+# Keep Scenario 3 intentionally mis-labeled for learner troubleshooting.
+if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+    chcon -t user_home_t "${target}" || true
+fi
+
+# Force an initially broken web state so curl on :82 fails
+# until learners repair/start/enable httpd as part of Scenario 3.
+systemctl stop httpd || true
