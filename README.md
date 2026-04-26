@@ -73,7 +73,9 @@ At finalize, the host runs automated checks against the container state and can 
 
 ### Troubleshooting
 
+- **`sudo project100-exam-attach: command not found`** — Host helpers install under **`/usr/bin`** (not `/usr/local/bin`) so **`sudo`**’s default `secure_path` can find them. Re-run **`setup.sh`** after pulling repo updates; if an old install remains, remove **`/usr/local/bin/project100-exam-*`** or rely on setup’s cleanup.
 - **SELinux on the host** — If exercises that read enforcement disagree with the host, ensure the exam container is run with **read-write** bind of `/sys/fs/selinux` where your setup expects it (see `SKILL.md` / `agent.md`).
+- **`exam-disk-setup` / `httpd` fail with bind mounts** — Empty host dirs for **`exam-storage`** and **`logs`** replace image content; **`setup.sh` / ensure-container** seeds **`*.img`** and **`logs/httpd`** from the image when needed. Re-run **`sudo bash setup.sh`** or **`sudo systemctl start project100-exam.service`** after updating scripts.
 - **Registry pull failures** — Check `BASE_IMAGE`, network, and registry credentials; `project100-exam-ensure-container` fails the pull if the image is unreachable.
 - **Lost container or scoring** — Using **`podman run --rm`** for the real exam drops the writable layer and breaks finalize; use **`project100-exam-attach`** after **`setup.sh`**.
 

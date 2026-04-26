@@ -42,16 +42,17 @@ if [[ "${rhel_major}" != "9" && "${rhel_major}" != "10" ]]; then
   fatal "Unsupported RHEL major version: ${rhel_major:-unknown}. Expected 9 or 10."
 fi
 
-IMAGE_DEFAULT="docker.io/A-calculus/project100-exam:latest"
+IMAGE_DEFAULT="docker.io/acalculus/project100-exam:latest"
 CONTAINER_NAME_DEFAULT="project100-exam"
 STATE_DIR_DEFAULT="/var/lib/project100-exam"
 PERSIST_IMAGE_DEFAULT="localhost/project100-exam:persisted"
 ENV_FILE="/etc/project100-exam.env"
-ENSURE_SCRIPT="/usr/local/bin/project100-exam-ensure-container"
-EXPIRE_SCRIPT="/usr/local/bin/project100-exam-expire"
-FINALIZE_SCRIPT="/usr/local/bin/project100-exam-finalize"
-FINISH_SCRIPT="/usr/local/bin/project100-exam-finish-now"
-ATTACH_SCRIPT="/usr/local/bin/project100-exam-attach"
+# /usr/bin: always on sudo secure_path (unlike /usr/local/bin on many RHEL systems).
+ENSURE_SCRIPT="/usr/bin/project100-exam-ensure-container"
+EXPIRE_SCRIPT="/usr/bin/project100-exam-expire"
+FINALIZE_SCRIPT="/usr/bin/project100-exam-finalize"
+FINISH_SCRIPT="/usr/bin/project100-exam-finish-now"
+ATTACH_SCRIPT="/usr/bin/project100-exam-attach"
 SETUP_MARKER_NAME=".project100-exam-setup-complete"
 SERVICE_FILE="/etc/systemd/system/project100-exam.service"
 TTL_SERVICE_FILE="/etc/systemd/system/project100-exam-ttl-cleanup.service"
@@ -163,7 +164,10 @@ if [[ -z "${BASE_IMAGE:-}" || -z "${PERSIST_IMAGE:-}" || -z "${CONTAINER_NAME:-}
   exit 1
 fi
 
-mkdir -p "${STATE_DIR}/exam-storage" "${STATE_DIR}/logs"
+# OCI/Docker: image repository path must be lowercase (e.g. docker.io/user/repo).
+BASE_IMAGE="${BASE_IMAGE,,}"
+
+mkdir -p "${STATE_DIR}/exam-storage" "${STATE_DIR}/logs/httpd"
 
 # Require BASE_IMAGE locally: pull from registry (e.g. docker.io) when missing.
 if ! /usr/bin/podman image exists "${BASE_IMAGE}"; then
@@ -177,6 +181,26 @@ if ! /usr/bin/podman image exists "${BASE_IMAGE}"; then
   exit 1
 fi
 
+# Host bind replaces /var/lib/exam-storage and /var/log; copy loop images + log dirs from the image when missing.
+_need_seed=0
+for _img in sdb sdc sdd; do
+  if [[ ! -s "${STATE_DIR}/exam-storage/${_img}.img" ]]; then
+    _need_seed=1
+    break
+  fi
+done
+if [[ "${_need_seed}" -eq 1 ]]; then
+  echo "project100-exam-ensure-container: seeding exam-storage/*.img from ${BASE_IMAGE} (bind mount hides image layers)." >&2
+  if ! /usr/bin/podman run --rm --pull=never \
+    -v "${STATE_DIR}/exam-storage:/out:Z" \
+    --user 0:0 \
+    --entrypoint /bin/sh "${BASE_IMAGE}" \
+    -c 'exec cp -a /var/lib/exam-storage/sdb.img /var/lib/exam-storage/sdc.img /var/lib/exam-storage/sdd.img /out/'; then
+    echo "project100-exam-ensure-container: ERROR: failed to copy exam disk images from ${BASE_IMAGE}" >&2
+    exit 1
+  fi
+fi
+
 # Telegram secrets: baked in image at /opt/exam-data/host-provision/telegram.env → host STATE_DIR.
 TG_IN_IMAGE="/opt/exam-data/host-provision/telegram.env"
 if /usr/bin/podman run --rm --pull=never --entrypoint /bin/cat "${BASE_IMAGE}" "${TG_IN_IMAGE}" \
@@ -186,6 +210,17 @@ if /usr/bin/podman run --rm --pull=never --entrypoint /bin/cat "${BASE_IMAGE}" "
 else
   rm -f "${STATE_DIR}/telegram.env.tmp"
   echo "project100-exam-ensure-container: warning: could not extract ${TG_IN_IMAGE} from ${BASE_IMAGE}; build with exam-build.env or finalize will fail until telegram.env exists." >&2
+fi
+
+# Match `podman run -it`: attach must use a real TTY or console-getty/login breaks (garbled input, stuck prompts).
+if /usr/bin/podman container exists "${CONTAINER_NAME}"; then
+  if _ins="$(/usr/bin/podman inspect "${CONTAINER_NAME}" --format '{{.Config.Tty}} {{.Config.OpenStdin}}' 2>/dev/null)"; then
+    read -r _tty _stdin <<< "${_ins}"
+    if [[ "${_tty}" != "true" || "${_stdin}" != "true" ]]; then
+      echo "project100-exam-ensure-container: recreating ${CONTAINER_NAME} with --interactive --tty (same as podman run -it; host binds unchanged)." >&2
+      /usr/bin/podman rm -f "${CONTAINER_NAME}" || true
+    fi
+  fi
 fi
 
 if ! /usr/bin/podman container exists "${CONTAINER_NAME}"; then
@@ -204,6 +239,8 @@ if ! /usr/bin/podman container exists "${CONTAINER_NAME}"; then
     PODMAN_EXTRA+=( -v /sys/fs/selinux:/sys/fs/selinux )
   fi
   /usr/bin/podman create \
+    --interactive \
+    --tty \
     --name "${CONTAINER_NAME}" \
     --restart unless-stopped \
     --privileged \
@@ -232,7 +269,7 @@ if [[ ! -f "${MARKER}" ]]; then
   exit 1
 fi
 
-/usr/local/bin/project100-exam-ensure-container
+/usr/bin/project100-exam-ensure-container
 /usr/bin/podman start "${CONTAINER_NAME}" 2>/dev/null || true
 exec /usr/bin/podman attach --sig-proxy "${CONTAINER_NAME}"
 EOF
@@ -271,7 +308,7 @@ fi
 if ! /usr/bin/podman container exists "${CONTAINER_NAME}"; then
   echo "project100-exam-finalize: container ${CONTAINER_NAME} does not exist" >&2
   if [[ "${FORCE_CLEANUP:-0}" == "1" ]]; then
-    exec /usr/local/bin/project100-exam-expire
+    exec /usr/bin/project100-exam-expire
   fi
   exit 1
 fi
@@ -282,7 +319,7 @@ sleep 2
 if ! /usr/bin/podman exec "${CONTAINER_NAME}" /usr/local/bin/exam-score-scenarios; then
   echo "project100-exam-finalize: exam-score-scenarios failed" >&2
   if [[ "${FORCE_CLEANUP:-0}" == "1" ]]; then
-    exec /usr/local/bin/project100-exam-expire
+    exec /usr/bin/project100-exam-expire
   fi
   exit 1
 fi
@@ -329,7 +366,7 @@ fi
 trap - EXIT
 rm -f "${TG_OUT}" /tmp/project100-telegram-body.txt
 
-exec /usr/local/bin/project100-exam-expire
+exec /usr/bin/project100-exam-expire
 EOF
 chmod 0755 "${FINALIZE_SCRIPT}"
 
@@ -338,7 +375,7 @@ cat > "${FINISH_SCRIPT}" <<'EOF'
 set -euo pipefail
 /usr/bin/systemctl stop project100-exam-ttl.timer 2>/dev/null || true
 /usr/bin/systemctl disable project100-exam-ttl.timer 2>/dev/null || true
-exec /usr/local/bin/project100-exam-finalize
+exec /usr/bin/project100-exam-finalize
 EOF
 chmod 0755 "${FINISH_SCRIPT}"
 
@@ -348,12 +385,17 @@ set -euo pipefail
 
 source /etc/project100-exam.env
 
+_finish_main="$(/usr/bin/systemctl show project100-exam-finish-now.service -p MainPID --value 2>/dev/null || echo "")"
+
 # Stop and disable managed services/timer first.
 /usr/bin/systemctl stop project100-exam.service || true
 /usr/bin/systemctl disable project100-exam.service || true
 /usr/bin/systemctl stop project100-exam-ttl.timer || true
 /usr/bin/systemctl disable project100-exam-ttl.timer || true
-/usr/bin/systemctl stop project100-exam-finish-now.service || true
+# Stopping project100-exam-finish-now while running as its MainPID sends SIGTERM to this process (finalize execs expire).
+if [[ ! "${_finish_main}" =~ ^[0-9]+$ || "${_finish_main}" -ne $$ ]]; then
+  /usr/bin/systemctl stop project100-exam-finish-now.service || true
+fi
 /usr/bin/systemctl disable project100-exam-finish-now.service || true
 
 # Tear down container and images.
@@ -364,22 +406,38 @@ source /etc/project100-exam.env
 # Remove storage and helper artifacts.
 /usr/bin/rm -rf "${STATE_DIR}" || true
 /usr/bin/rm -f /etc/project100-exam.env || true
-/usr/bin/rm -f /usr/local/bin/project100-exam-ensure-container || true
-/usr/bin/rm -f /usr/local/bin/project100-exam-finalize || true
-/usr/bin/rm -f /usr/local/bin/project100-exam-finish-now || true
-/usr/bin/rm -f /usr/local/bin/project100-exam-attach || true
+/usr/bin/rm -f /usr/bin/project100-exam-ensure-container || true
+/usr/bin/rm -f /usr/bin/project100-exam-finalize || true
+/usr/bin/rm -f /usr/bin/project100-exam-finish-now || true
+/usr/bin/rm -f /usr/bin/project100-exam-attach || true
 
 # Remove service files and this cleanup script itself.
 /usr/bin/rm -f /etc/systemd/system/project100-exam.service || true
 /usr/bin/rm -f /etc/systemd/system/project100-exam-ttl-cleanup.service || true
 /usr/bin/rm -f /etc/systemd/system/project100-exam-ttl.timer || true
 /usr/bin/rm -f /etc/systemd/system/project100-exam-finish-now.service || true
-/usr/bin/rm -f /usr/local/bin/project100-exam-expire || true
+/usr/bin/rm -f /usr/bin/project100-exam-expire || true
+/usr/bin/rm -f \
+  /usr/local/bin/project100-exam-ensure-container \
+  /usr/local/bin/project100-exam-expire \
+  /usr/local/bin/project100-exam-finalize \
+  /usr/local/bin/project100-exam-finish-now \
+  /usr/local/bin/project100-exam-attach \
+  2>/dev/null || true
 
 /usr/bin/systemctl daemon-reload || true
 /usr/bin/systemctl reset-failed || true
 EOF
 chmod 0755 "${EXPIRE_SCRIPT}"
+
+# Drop legacy paths (sudo secure_path often excludes /usr/local/bin).
+/usr/bin/rm -f \
+  /usr/local/bin/project100-exam-ensure-container \
+  /usr/local/bin/project100-exam-expire \
+  /usr/local/bin/project100-exam-finalize \
+  /usr/local/bin/project100-exam-finish-now \
+  /usr/local/bin/project100-exam-attach \
+  2>/dev/null || true
 
 cat > "${TTL_SERVICE_FILE}" <<'EOF'
 [Unit]
@@ -388,7 +446,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/project100-exam-finalize
+ExecStart=/usr/bin/project100-exam-finalize
 EOF
 
 cat > "${TTL_TIMER_FILE}" <<'EOF'
@@ -411,21 +469,21 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/project100-exam-finish-now
+ExecStart=/usr/bin/project100-exam-finish-now
 EOF
 
 info "[8/9] Installing systemd units…"
 cat > "${SERVICE_FILE}" <<'EOF'
 [Unit]
 Description=Project100 Exam Container (ensure image, create/start container)
-After=network-online.target
+After=network-online.target chronyd.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=/etc/project100-exam.env
-ExecStart=/usr/local/bin/project100-exam-ensure-container
+ExecStart=/usr/bin/project100-exam-ensure-container
 ExecStop=/bin/bash -lc 'set -a; source /etc/project100-exam.env; set +a; exec /usr/bin/podman stop -t 15 "${CONTAINER_NAME}"'
 TimeoutStopSec=70
 
@@ -436,7 +494,9 @@ EOF
 info "[9/9] Enabling timer and bootstrapping exam container…"
 systemctl daemon-reload
 systemctl enable project100-exam.service
-systemctl enable --now project100-exam-ttl.timer
+systemctl enable project100-exam-ttl.timer
+# Schedule TTL first; start exam container last (matches unit After= ordering on boot).
+systemctl start project100-exam-ttl.timer || true
 
 if systemctl start project100-exam.service; then
   printf '%s\n%s\n' "Project100 exam host setup completed successfully." "$(date -Is)" > "${STATE_DIR_DEFAULT}/${SETUP_MARKER_NAME}"
