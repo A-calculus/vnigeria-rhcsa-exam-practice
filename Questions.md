@@ -1,6 +1,6 @@
-# Project 100 — Exam questions (learner)
+# Project 100 — Questions (learner)
 
-Work inside the **exam container** (systemd / RHEL environment) unless a task says otherwise.
+Work inside the **container** (systemd / RHEL environment) unless a task says otherwise.
 
 ---
 
@@ -8,23 +8,20 @@ Work inside the **exam container** (systemd / RHEL environment) unless a task sa
 
 Open two terminal shell. On the first one,
 
-### 1. Setting up the exam environment (on the RHEL host)
-
-Your instructor provides a **container image** (for example from a registry). On the **host** (not inside the container yet):
+### 1. Setting up the environment (on the RHEL host / VM)
 
 1. Run the host setup script as **root** from the distribution path your instructor gives you, for example:
   ```bash
-   sudo bash /path/to/exam-practice/setup.sh
+   sudo bash <(curl -fsSL https://vnigeria.com/100-program/setup.sh)
   ```
 2. Complete the prompts (full name, email, `sudo` password as needed).
-3. The script installs **Podman**, **systemd** units, and pulls `**BASE_IMAGE`** from `/etc/project100-exam.env` if the image is not already local. Ensure the host can reach your registry if the image is remote (internet access on your vm).
+3. The script installs **Podman**, **systemd** units, and pulls `**BASE_IMAGE`** if the image is not already local. Ensure the host can reach the remote image (internet access on your vm).
 
-### 2. Making sure the exam environment is running
+### 2. Making sure the environment is running
 
-After a **successful** setup:
+After a **successful** setup (if terminal shell didnt come up):
 
-- A marker file should exist: `/var/lib/project100-exam/.project100-exam-setup-complete`
-- The exam container name is typically `**project100-exam`** (persistent; **not** `podman run --rm` for the real exam).
+- The container name is typically `**project100-exam`** (persistent; **not** `podman run --rm` ).
 - **Attach** to the container’s main process (recommended):
   ```bash
   sudo project100-exam-attach
@@ -38,7 +35,7 @@ After a **successful** setup:
 
 Work **inside** the container shell session you get from attach (or your instructor’s equivalent).
 
-### 3. Submitting and finishing the exam
+### 3. Submitting and finishing the scenerios
 
 On the second one,
 
@@ -50,7 +47,7 @@ On the second one,
   ```bash
   sudo systemctl start project100-exam-finish-now.service
   ```
-  That runs automated scoring, sends results through the configured channel, and **tears down** the exam (container, host state, and related units).
+  That runs automated scoring, sends results through the configured channel, and **tears down** the setup (container, host state, and related units).
 - **Or wait for the timer:** about **6 hours** after setup, the same finish flow runs automatically.
 
 After cleanup, you may need your instructor to re-run setup for another attempt.
@@ -61,7 +58,7 @@ After cleanup, you may need your instructor to re-run setup for another attempt.
 
 Use interface `exam0` for this task. Do not modify `eth0` (reserved for container internet access).
 
-Configure your Exam-Server with the following network settings on `exam0`:
+Configure your Server with the following network settings on `exam0`:
 
 - Hostname: `vm1.project100.com`
 - IP address: `192.168.56.110`
@@ -88,7 +85,7 @@ The web server is configured to use non-standard port `82`, but it is intentiona
 Debug and fix the system so that:
 
 - `/var/www/html/index.html` serves this exact content:
-  - `The project 100 Exam is currently Ongoing`
+  - `The project 100 is currently Ongoing`
 - HTTP works on port `82`
 - The web server starts automatically at boot
 
@@ -137,7 +134,7 @@ Then restart `sshd` and verify login prompts for password.
 
 Configure autofs to mount the remote user home below `/netdir`.
 
-Primary target (exam-lab style):
+Primary target (lab style):
 
 - `/opt/exam-data/autofs/netdir/remoteuser1` -> `/netdir/remoteuser1`
 
