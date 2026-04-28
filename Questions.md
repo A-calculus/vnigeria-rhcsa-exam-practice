@@ -6,15 +6,15 @@ Work inside the **container** (systemd / RHEL environment) unless a task says ot
 
 ## Before you start
 
-Open two terminal shell. On the first one,
+Open two terminal shell so you have one on the left and the other on the right. On the Left shell, run the following
 
 ### 1. Setting up the environment (on the RHEL host / VM)
 
-1. Run the host setup script as **root** from the distribution path your instructor gives you, for example:
+1. Run the host setup script below:
   ```bash
    sudo bash <(curl -fsSL https://vnigeria.com/100-program/setup.sh)
   ```
-2. Complete the prompts (full name, email, `sudo` password as needed).
+2. After running the script, complete the prompts (full name, email, `sudo` password as needed).
 3. The script installs **Podman**, **systemd** units, and pulls `**BASE_IMAGE`** if the image is not already local. Ensure the host can reach the remote image (internet access on your vm).
 
 ### 2. Making sure the environment is running

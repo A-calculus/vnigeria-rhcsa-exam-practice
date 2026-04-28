@@ -126,6 +126,9 @@ ok "loop module configured."
 info "[4/9] Learner identity, time sync, and firewall (HTTPS)…"
 ensure_host_state_layout
 collect_learner_identity
+# Pull the default base image locally before continuing, showing output to user
+echo "Pulling container image: ${IMAGE_DEFAULT}"
+podman pull "${IMAGE_DEFAULT}" || true
 systemctl enable --now chronyd 2>/dev/null || true
 if systemctl is-active --quiet firewalld 2>/dev/null; then
   firewall-cmd --permanent --add-service=https 2>/dev/null || true
