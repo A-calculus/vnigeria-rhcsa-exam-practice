@@ -4,7 +4,7 @@ Work inside the **container** (systemd / RHEL environment) unless a task says ot
 
 ---
 
-## Before you start
+## Before you start (read instructions carefully)
 
 Open two terminal shell so you have one on the left and the other on the right. On the Left shell, run the following
 
@@ -14,10 +14,21 @@ Open two terminal shell so you have one on the left and the other on the right. 
   ```bash
    sudo bash <(curl -fsSL https://vnigeria.com/100-program/setup.sh)
   ```
+
+  or:
+  ```bash
+  curl -LO https://vnigeria.com/100-program/setup.sh; sudo bash setup.sh
+  ```
+
 2. After running the script, complete the prompts (full name, email, `sudo` password as needed).
 3. The script installs **Podman**, **systemd** units, and pulls `**BASE_IMAGE`** if the image is not already local. Ensure the host can reach the remote image (internet access on your vm).
+4. To login, use
+    ```bash
+    username: student
+    password: student
+    ```
 
-### 2. Making sure the environment is running
+### 2. Making sure the environment is running (optional)
 
 After a **successful** setup (if terminal shell didnt come up):
 
@@ -37,7 +48,7 @@ Work **inside** the container shell session you get from attach (or your instruc
 
 ### 3. Submitting and finishing the scenerios
 
-On the second one,
+On the right shell,
 
 - **Finish early (manual):** on the **host**, run:
   ```bash
